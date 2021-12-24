@@ -1,0 +1,8 @@
+graph_api_access_token = 
+graph_api_version = "v12.0/"
+graph_api_base_path = "https://graph.facebook.com/"
+
+unsplash_access_token =
+unsplash_api_base_path = "https://api.unsplash.com/"
+unsplash_api_version = "v1"
+
