@@ -6,6 +6,8 @@ def get_configuration():
         default_config_files=['/etc/app/conf.d/*.conf', '~/.my_settings'])
     p.add('-c', '--my-config', required=True,
           is_config_file=True, help='config file path')
+    p.add('-a', '--configure_accounts', required=False, action='store_true',
+          help='Argument used for creating account configuration files.')
     p.add('--graph_api_access_token', required=True, help='Access Token')
     p.add('--graph_api_version', required=True,
           help='Version of the Instagram Graph API')
