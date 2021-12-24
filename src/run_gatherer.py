@@ -1,5 +1,6 @@
 
 import requests
+import random
 import logging
 import json
 from pathlib import Path
@@ -96,8 +97,9 @@ class GraphHandler:
                 else:
                     conf_file = open(file_name, 'w')
                     # Adding 2 new fields to hold hashtags and captions.
-                    account["hashtags"] = []
-                    account["captions"] = []
+                    account['hashtags'] = []
+                    account['captions'] = []
+                    account['collections'] = ""
                     json.dump(account, conf_file, indent=4)
                 # Closing file
                 conf_file.close()
@@ -162,15 +164,74 @@ class GraphHandler:
         self.get_account_info()
         self.get_business_user_ids()
 
+    def construct_caption(self, acc_data):
+        """ Constructs post caption from multiple strings. """
+
+        # Getting random caption from configuration file
+        caption = acc_data['captions'][random.randint(
+            0, len(acc_data['captions'])) - 1]
+
+        if acc_data['hashtags']:
+            # Adding hashtags as space delimited string
+            caption += '\n' * 2 + " ".join(acc_data['hashtags'])
+        else:
+            logging.warning('Post hashtags not found.')
+
+        # Adding author credits
+        if acc_data['author']:
+            caption += '\n Photo by ' + acc_data['author']
+        else:
+            logging.info("Author credits are not found.")
+
+        return caption
+
     def start_posting_process(self):
         """ Starts the process of posting photos to each account."""
 
         # Read configuration file into memory
         for p in Path(ACCOUNT_CONFIG_PATH).glob('*.json'):
             # Loading account configuration data into dictionary
-            account_data = json.loads(p.read_text())
+            acc_data = json.loads(p.read_text())
+            # Setting flag to ensure that required information exists.
+            post_valid = True
+            # Creating temporary dict to store individual post related information
+            post_data = dict()
+            post_data['user_id'] = acc_data['user_id']
             logging.info(
-                "Starting posting process for account: " + account_data['name'])
+                "Starting posting process for account: " + acc_data['name'])
+
+            # Getting image.
+            if acc_data['collections']:
+                try:
+                    supplier = ImageSupplier(self.args)
+                    # Passing collection ids to get random image from them.
+                    image_data = supplier.get_random_image_from_collections(
+                        acc_data['collections'])
+                    # Merging image data to account data
+                    acc_data.update(image_data)
+                    # Setting image url
+                    post_data['image_url'] = image_data['image_url']
+                except KeyError as exc:
+                    logging.error(
+                        'Error happened while getting image from ImageSupplier. \n Stacktrace: ' + exc)
+                    post_valid = False
+            else:
+                logging.warning(
+                    'Account configuration file does not contain image collection identifiers.')
+                post_valid = False
+
+            # Constructing caption for the post.
+            if acc_data['captions']:
+                # Constructing random caption.
+                post_data['caption'] = self.construct_caption(acc_data)
+            else:
+                logging.warning(
+                    "Account configuration file does not contain captions.")
+                post_valid = False
+
+            # If post is valid, creating media container.
+            if post_valid:
+                self.create_media_container()
 
 
 def main():
