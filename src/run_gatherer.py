@@ -167,6 +167,7 @@ class GraphHandler:
     def construct_caption(self, acc_data):
         """ Constructs post caption from multiple strings. """
 
+        logging.info("Constructing post caption.")
         # Getting random caption from configuration file
         caption = acc_data['captions'][random.randint(
             0, len(acc_data['captions'])) - 1]
@@ -181,7 +182,7 @@ class GraphHandler:
         if acc_data['author']:
             caption += '\n Photo by ' + acc_data['author']
         else:
-            logging.info("Author credits are not found.")
+            logging.info("Author credits not found.")
 
         return caption
 
