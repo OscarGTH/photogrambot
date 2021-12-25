@@ -15,7 +15,7 @@ class ImageSupplier:
 
         image_info = dict()
         # Setting payload
-        payload = {"collections": collections, 'orientation': 'squarish',
+        payload = {"collections": collections, 
                    "content_filter": "high"}
         # Setting headers (Authorization and version)
         headers = {"Authorization": "Client-ID " + self.args.unsplash_access_token,
@@ -27,10 +27,14 @@ class ImageSupplier:
 
         if resp.status_code == 200:
             resp_data = resp.json()
+            # Constructing fitting image url with custom dimensions
+            image_url = resp_data['urls']['raw'] + '&fit=crop&w=1080&h=1350'
+            image_id = image_url.partition("photo-")[2].partition("?")[0]
             # Inserting needed information into dict.
             image_info.update(
                 {'author': resp_data['user']['name'],
-                 'image_url': resp_data['urls']['regular']})
+                 'image_url': image_url,
+                 'image_id': image_id})
         else:
             print(resp)
         return image_info

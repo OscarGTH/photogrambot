@@ -4,6 +4,8 @@ import random
 import logging
 import json
 from pathlib import Path
+
+from requests.api import post
 import parse_config
 from image_supplier import ImageSupplier
 
@@ -43,8 +45,7 @@ class GraphHandler:
                 # Processing every account
                 for account in resp_data['data']:
                     # Combining name and page ID into dict
-                    account_dict = {
-                        'name': account['name'], 'page_id': account['id']}
+                    account_dict = {'page_id': account['id']}
                     # Pushing dict into account info
                     self.info['accounts'].append(account_dict)
 
@@ -72,6 +73,30 @@ class GraphHandler:
                         # Setting the received IG user id to the account's dict
                         account['user_id'] = resp_data['instagram_business_account']['id']
 
+    def get_instagram_user_name(self):
+        """ Gets Instagram user name and appends it into the dictionary """
+
+        logging.info("Querying Instagram account user name.")
+        if self.info['accounts']:
+            # Setting payload to fetch Instagram username.
+            payload = {'access_token': self.args.graph_api_access_token,
+                       'fields': 'username'}
+
+            # Iterating over accounts
+            for account in self.info['accounts']:
+                url = self.base_url + account['user_id']
+                logging.info('Sending GET request to url: ' + url)
+                # Sending request
+                resp = requests.get(url, params=payload)
+
+                if resp.status_code == 200:
+                    resp_data = resp.json()
+                    if 'username' in resp_data:
+                        logging.info(
+                            "Received username " + resp_data['username'])
+                        # Setting the received IG user id to the account's dict
+                        account['name'] = resp_data['username']
+
     def create_configuration_files(self):
         """ Creates/updates configuration files for each Instagram user. """
 
@@ -96,10 +121,11 @@ class GraphHandler:
                     json.dump(conf_data, conf_file, indent=4)
                 else:
                     conf_file = open(file_name, 'w')
-                    # Adding 2 new fields to hold hashtags and captions.
+                    # Adding 4 new fields to hold hashtags, captions, collections and post ids.
                     account['hashtags'] = []
                     account['captions'] = []
                     account['collections'] = ""
+                    account['post_ids'] = []
                     json.dump(account, conf_file, indent=4)
                 # Closing file
                 conf_file.close()
@@ -136,15 +162,15 @@ class GraphHandler:
             logging.warning(
                 "Response from image publishing query is not OK. \n Response: " + resp.json())
 
-    def create_media_container(self, image_info, user_id):
+    def create_media_container(self, post_data):
         """ Creates Instagram media container """
 
         logging.info("Creating Instagram media container.")
         # Setting image url and caption to payload
         payload = {'access_token': self.args.graph_api_access_token,
-                   'image_url': image_info['image_url'],
-                   'caption': "Car photo by " + image_info['author'] + "."}
-        url = self.base_url + user_id + "/media"
+                   'image_url': post_data['image_url'],
+                   'caption': post_data['caption']}
+        url = self.base_url + post_data['user_id'] + "/media"
         logging.info("Sending POST request to url: " + url + "/media")
         resp = requests.post(url, params=payload)
 
@@ -153,16 +179,36 @@ class GraphHandler:
             # Getting creation id as the response
             creation_id = resp.json()['id']
             # Calling publishing function
-            self.publish_image(creation_id, user_id)
+            self.publish_image(creation_id, post_data['user_id'])
         else:
-            logging.warning(
-                "Creation of media container failed. \n Response: " + resp.json())
+            logging.warning("Creation of media container failed.")
+            logging.info(resp.json())
 
     def set_up_info(self):
         """ Fetches information needed for API calls and post publishing """
 
         self.get_account_info()
         self.get_business_user_ids()
+        self.get_instagram_user_name()
+
+    def mark_image_as_posted(self, image_id, acc_data):
+        """ Marks image as posted and saves id in account specific configuration file.
+        """
+
+        file_name = ACCOUNT_CONFIG_PATH + acc_data['user_id'] + ".json"
+        # Checking if file exists
+        if Path(file_name).is_file():
+            conf_file = open(file_name, 'r+')
+            conf_data = json.load(conf_file)
+            conf_data['post_ids'].append(image_id)
+            # Moving pointer back to the beginning of the file.
+            conf_file.seek(0)
+            # Writing updated values
+            json.dump(conf_data, conf_file, indent=4)
+            conf_file.close()
+        else:
+            logging.error(
+                "Configuration file wasn't found when checking for duplicate images.")
 
     def construct_caption(self, acc_data):
         """ Constructs post caption from multiple strings. """
@@ -172,15 +218,15 @@ class GraphHandler:
         caption = acc_data['captions'][random.randint(
             0, len(acc_data['captions'])) - 1]
 
-        if acc_data['hashtags']:
+        if 'hashtags' in acc_data and acc_data['hashtags']:
             # Adding hashtags as space delimited string
             caption += '\n' * 2 + " ".join(acc_data['hashtags'])
         else:
             logging.warning('Post hashtags not found.')
 
         # Adding author credits
-        if acc_data['author']:
-            caption += '\n Photo by ' + acc_data['author']
+        if 'author' in acc_data and acc_data['author']:
+            caption += '\n' * 2 + 'Photo by ' + acc_data['author']
         else:
             logging.info("Author credits not found.")
 
@@ -205,9 +251,22 @@ class GraphHandler:
             if acc_data['collections']:
                 try:
                     supplier = ImageSupplier(self.args)
+                    logging.info("Getting image from ImageSupplier.")
+
                     # Passing collection ids to get random image from them.
                     image_data = supplier.get_random_image_from_collections(
                         acc_data['collections'])
+
+                    # Check if image has been posted before.
+                    if image_data['image_id'] not in acc_data['post_ids']:
+                        self.mark_image_as_posted(
+                            image_data['image_id'], acc_data)
+                    else:
+                        # If image was duplicate, the post will be skipped.
+                        # TODO: Get another image until it is not duplicate.
+                        logging.warning("Image is duplicate")
+                        post_valid = False
+
                     # Merging image data to account data
                     acc_data.update(image_data)
                     # Setting image url
@@ -232,7 +291,10 @@ class GraphHandler:
 
             # If post is valid, creating media container.
             if post_valid:
-                self.create_media_container()
+                self.create_media_container(post_data)
+            else:
+                logging.warning("Skipping publishing image for account " +
+                                acc_data['name'] + ' due to post not being valid.')
 
 
 def main():
